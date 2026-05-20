@@ -22,7 +22,7 @@ python = ">=3.10,<3.13"
 torchapp = ">=0.5.7"
 hierarchicalsoftmax = ">=1.4.3"
 biopython = ">=1.79"
-torch = "=>2.2.0"
+torch = ">=2.2.0"
 lightning = ">=2.3.3"
 polars = ">=1.31.0"
 
