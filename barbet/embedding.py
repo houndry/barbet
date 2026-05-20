@@ -159,6 +159,7 @@ class Embedding(CLIApp, ABC):
     """ A class for embedding protein sequences. """
     max_length:int|None=None
     overlap:int=64
+    mean_pool:bool=True
 
     def __post_init__(self):
         super().__init__()
@@ -169,6 +170,9 @@ class Embedding(CLIApp, ABC):
         raise NotImplementedError
 
     def reduce(self, tensor:torch.Tensor) -> torch.Tensor:
+        if not self.mean_pool:
+            return tensor
+        
         if tensor.ndim == 2:
             tensor = tensor.mean(dim=0)
         assert tensor.ndim == 1

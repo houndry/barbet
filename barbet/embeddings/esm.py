@@ -72,18 +72,8 @@ class ESMEmbedding(Embedding):
         self.alphabet = None
 
     def __getstate__(self):
-        return dict(max_length=self.max_length, layers=str(self.layers))
-        # Return a dictionary of attributes to be pickled
-        state = self.__dict__.copy()
-        # Remove the attribute that should not be pickled
-        if 'model' in state:
-            del state['model']
-        if 'batch_converter' in state:
-            del state['batch_converter']
-        if 'alphabet' in state:
-            del state['alphabet']
-        if 'device' in state:
-            del state['device']
+        state = super().__getstate__()
+        state.update(dict(layers=str(self.layers)))
         return state
 
     def __setstate__(self, state):
