@@ -28,6 +28,27 @@ if TYPE_CHECKING:
     import polars as pl
 
 
+def resolve_output_path(path: Path | str | bool, output_dir: Path, default_name: str) -> Path:
+    """
+    Resolves the path of an optional output file and creates its parent directory.
+
+    - True, 'true' or '1' gives `output_dir / default_name`.
+    - An existing directory gives `path / default_name`.
+    - A bare filename (e.g. 'predictions.tsv') is placed in `output_dir`.
+    - Any other path is used as given.
+    """
+    if isinstance(path, bool) or str(path).lower() in ("true", "1"):
+        resolved = Path(output_dir) / default_name
+    else:
+        resolved = Path(path)
+        if resolved.is_dir():
+            resolved = resolved / default_name
+        elif not resolved.is_absolute() and len(resolved.parts) == 1:
+            resolved = Path(output_dir) / resolved
+
+    resolved.parent.mkdir(exist_ok=True, parents=True)
+    return resolved
+
 
 class ImageFormat(str, Enum):
     """The image format to use for the output images."""
@@ -349,6 +370,36 @@ class Barbet(TorchApp):
             default="https://data.ace.uq.edu.au/public/gtdbtk/release95/markers/tigrfam/tigrfam.hmm",
             help="The TIGRFAM database to use.",
         ),
+        output_predictions: Path = Param(
+            default=None,
+            help=(
+                "A path to output the top N predictions per rank as a TSV file. "
+                "A bare filename is placed in --output-dir and a directory gets 'barbet-top-predictions.tsv'."
+            ),
+        ),
+        num_predictions: int = Param(
+            default=1,
+            help="The number of top predictions per rank to output when --output-predictions is specified."
+        ),
+        global_predictions: bool = Param(
+            default=False,
+            help=(
+                "When set, the top N taxa at each rank are chosen globally across the entire "
+                "taxonomy (not just within the children of the greedy top-1 parent). "
+                "Taxa that are the only child of their parent are ranked with their parent's probability. "
+                "Requires --output-predictions to be set. "
+                "Output columns change to joint_probability, local_probability, prediction_number, "
+                "and in_predicted_lineage."
+            ),
+        ),
+        context_vector_file: Path = Param(
+            default=None,
+            help=(
+                "A path to output the N-dimensional mean-pooled context vectors per genome as a TSV file "
+                "(gzipped if the path ends in '.gz'). A bare filename is placed in --output-dir and a "
+                "directory gets 'barbet-context-vectors.tsv'."
+            ),
+        ),
         **kwargs,
     ):
         """Barbet is a tool for assigning taxonomic labels to genomes using Machine Learning."""
@@ -540,9 +591,41 @@ class Barbet(TorchApp):
                 shuffle=False,
             )
             names = [stack.genome for stack in self.prediction_dataset.stacks]
-            module.setup_prediction(self, names)
+            # Top-N predictions need the full probability matrix to be retained after
+            # inference; this does not change how barbet-predictions.csv is calculated.
+            save_ctx = bool(context_vector_file)
+            if global_predictions and not output_predictions:
+                self.logger.warning(
+                    "--global-predictions has no effect without --output-predictions."
+                )
+            module.setup_prediction(
+                self,
+                names,
+                retain_probabilities=bool(output_predictions),
+                save_context_vectors=save_ctx,
+            )
             trainer.predict(module, dataloaders=combined_dataloader)
             total_df = module.results_df
+
+            # Write the main results before the optional outputs so that they are kept if one of these fails
+            if output_csv:
+                total_df.write_csv(output_csv)
+                self.logger.info(f"Saved to: '{output_csv}'")
+
+            if output_predictions:
+                out_pred_path = resolve_output_path(output_predictions, self.output_dir, "barbet-top-predictions.tsv")
+                top_preds_df = module.generate_top_predictions(
+                    self,
+                    num_predictions=num_predictions,
+                    global_predictions=global_predictions,
+                )
+                top_preds_df.write_csv(out_pred_path, separator="\t")
+                self.logger.info(f"Saved top predictions to: '{out_pred_path}'")
+
+            if context_vector_file:
+                out_ctx_path = resolve_output_path(context_vector_file, self.output_dir, "barbet-context-vectors.tsv")
+                module.save_context_vectors_tsv(out_ctx_path)
+                self.logger.info(f"Saved context vectors to: '{out_ctx_path}'")
 
         embed_classify_time = time.perf_counter() - start_time_embed_classify
         self.logger.info(
@@ -550,14 +633,10 @@ class Barbet(TorchApp):
         )
 
         if total_df is not None:
-            if output_csv:
-                total_df.write_csv(output_csv)
-
             print_polars_df(
                 total_df[["name", "species_prediction", "species_probability", ]],
                 column_names=["Genome", "Species", "Probability"],
             )
-            self.logger.info(f"Saved to: '{output_csv}'")
         else:
             self.logger.warning("No predictions were generated.")
 
@@ -584,6 +663,13 @@ class Barbet(TorchApp):
         probabilities: bool = Param(
             default=False, help="If True, include probabilities for all the nodes in the taxonomic tree."
         ),
+        context_vector_file: Path = Param(
+            default=None,
+            help=(
+                "A path to output the N-dimensional mean-pooled context vectors per genome as a TSV file "
+                "(gzipped if the path ends in '.gz')."
+            ),
+        ),
         **kwargs,
     ):
         """Barbet is a tool for assigning taxonomic labels to genomes using Machine Learning."""
@@ -593,7 +679,13 @@ class Barbet(TorchApp):
         trainer = self.prediction_trainer(module, **kwargs)
         prediction_dataloader = self.prediction_dataloader_memmap(module, **kwargs)
 
-        module.setup_prediction(self, [stack.genome for stack in self.prediction_dataset.stacks], save_probabilities=probabilities)
+        save_ctx = bool(context_vector_file)
+        module.setup_prediction(
+            self,
+            [stack.genome for stack in self.prediction_dataset.stacks],
+            save_probabilities=probabilities,
+            save_context_vectors=save_ctx,
+        )
         trainer.predict(module, dataloaders=prediction_dataloader, return_predictions=False)
         results_df = module.results_df
 
@@ -628,6 +720,13 @@ class Barbet(TorchApp):
         output_csv = Path(output_csv)
         output_csv.parent.mkdir(exist_ok=True, parents=True)
         results_df.write_csv(output_csv)
+
+        if context_vector_file:
+            out_ctx_path = resolve_output_path(
+                context_vector_file, getattr(self, "output_dir", Path("output")), "barbet-context-vectors.tsv"
+            )
+            module.save_context_vectors_tsv(out_ctx_path)
+            self.logger.info(f"Saved context vectors to: '{out_ctx_path}'")
 
         total_time = time.perf_counter() - start_time
         self.logger.info(f"Total time: {total_time:.2f} seconds")

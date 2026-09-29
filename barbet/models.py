@@ -19,6 +19,7 @@ class BarbetModel(nn.Module):
         assert growth_factor > 0.0
         
         self.classification_tree = classification_tree
+        out_features = features
         modules = [nn.LazyLinear(out_features=features), nn.PReLU()]
         for _ in range(intermediate_layers):
             out_features = int(features * growth_factor + 0.5)

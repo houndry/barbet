@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "Barbet"
-version = "0.1.1"
+version = "0.2.0"
 description = "Bacteria and Archaea Representation using Bidirectional Embeddings for Taxonomic classification"
 authors = ["Robert Turnbull,  Mar Quiroga, Gabriele Marini, Torsten Seemann, Wytamma Wirth"]
 license = "Apache-2.0"

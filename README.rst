@@ -60,6 +60,47 @@ Or using the large model:
 
     barbet --input GCA_000006945.2.fna --output-dir outputs-large --large
 
+The predicted lineage and the probability at each rank are written to ``barbet-predictions.csv`` in the output directory.
+
+
+Additional outputs
+==================================
+
+Top predictions per rank
+------------------------
+
+To also write the top N taxa at each rank for each genome:
+
+.. code-block:: bash
+
+    barbet --input genomes/ --output-dir outputs --output-predictions top-predictions.tsv --num-predictions 5
+
+By default the alternatives at each rank are the children of the top prediction at the rank above.
+The TSV has the columns ``name``, ``rank``, ``taxon``, ``probability`` and ``prediction_number``,
+where ``probability`` is the probability of the full lineage down to that taxon (as in ``barbet-predictions.csv``).
+
+Add ``--global-predictions`` to instead rank every taxon at each rank across the whole taxonomy.
+Taxa that are the only child of their parent are ranked with their parent's probability. The TSV then has the columns:
+
+- ``joint_probability``: the probability of the full lineage down to the taxon
+- ``local_probability``: the probability of the taxon given its parent (1.0 for an only child)
+- ``prediction_number``: the position of the taxon in the ranking at that rank
+- ``in_predicted_lineage``: whether the taxon is in the lineage reported in ``barbet-predictions.csv``
+
+Context vectors
+---------------
+
+To write the mean-pooled context vector for each genome (the input to the classification layer, averaged over all gene stacks):
+
+.. code-block:: bash
+
+    barbet --input genomes/ --output-dir outputs --context-vector-file context-vectors.tsv.gz
+
+The TSV has the columns ``name`` and ``context_vector`` (comma-separated values) and is gzipped if the path ends in ``.gz``.
+
+For both options, a bare filename is written to ``--output-dir``, a directory gets a default filename
+(``barbet-top-predictions.tsv`` or ``barbet-context-vectors.tsv``), and any other path is used as given.
+
 
 Training
 ==================================
